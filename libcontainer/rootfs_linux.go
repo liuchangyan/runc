@@ -1,6 +1,7 @@
 package libcontainer
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -172,6 +173,48 @@ func prepareRootfs(pipe *syncSocket, iConfig *initConfig) (err error) {
 		if err := setupDevSymlinks(config.Rootfs); err != nil {
 			return fmt.Errorf("error setting up /dev symlinks: %w", err)
 		}
+	}
+
+	// check etc/mtab is softlink or not
+	_, err1 := os.Lstat(filepath.Join(config.Rootfs, "/etc/mtab"))
+	logrus.Info(filepath.Join(config.Rootfs, "/etc/mtab"))
+	if err1 != nil {
+		logrus.WithError(err).Errorf("check file status err")
+		logrus.WithError(err).Info("check file status err")
+		// return err
+	}
+
+	mtabPath := filepath.Join(config.Rootfs, "/etc/mtab")
+	file, err := os.Open(mtabPath)
+	if err != nil {
+		fmt.Printf("open file %s err: %v\n", mtabPath, err)
+	}
+	defer file.Close()
+	var checkOverlay bool
+	// contain overlay or not?
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		if scanner.Text() == "overlay" {
+			checkOverlay = true
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logrus.Info("read file err")
+	}
+
+	if !checkOverlay {
+		err = os.Remove(mtabPath)
+		if err := os.Symlink("/proc/self/mounts", mtabPath); err != nil && !os.IsExist(err) {
+			return err
+		}
+		if err != nil {
+			logrus.WithError(err).Info("delete file err")
+		}
+		logrus.Info("file has been deleted\n")
+	} else {
+		logrus.Info("file contains 'overlay'")
 	}
 
 	// Signal the parent to run the pre-start hooks.
